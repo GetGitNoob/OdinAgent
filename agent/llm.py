@@ -21,25 +21,35 @@ class LLMError(Exception):
 class LLMClient:
     def __init__(self, config: Config) -> None:
         self.config = config
-
-        if not config.llm_model:
-            raise ValueError("LLM_MODEL ist nicht konfiguriert (.env)")
-
-        self.client = OpenAI(
-            base_url=config.llm_base_url,
-            api_key=config.llm_api_key or "local-",
-            timeout=60.0,
-            max_retries=1,
-        )
+        # Kein Fehler beim Konstruieren: auch ohne LLM_MODEL muss der
+        # Webserver hochkommen und /api/health "degraded" melden.
+        # Der OpenAI-Client wird erst bei Bedarf angelegt (lazy).
+        self._client = None
 
     @property
     def is_configured(self) -> bool:
         return bool(self.config.llm_model)
 
+    def _get_client(self) -> "OpenAI | None":
+        """Erzeugt den OpenAI-Client lazy; None, wenn kein Modell gesetzt."""
+        if not self.config.llm_model:
+            return None
+        if self._client is None:
+            self._client = OpenAI(
+                base_url=self.config.llm_base_url,
+                api_key=self.config.llm_api_key or "local-",
+                timeout=60.0,
+                max_retries=1,
+            )
+        return self._client
+
     def check_available(self) -> bool:
         """Leichter Health-Check: Server erreichbar?  (model list)"""
+        client = self._get_client()
+        if client is None:
+            return False
         try:
-            self.client.models.list(timeout=5)
+            client.models.list(timeout=5)
             return True
         except Exception:
             return False
@@ -56,6 +66,9 @@ class LLMClient:
         Wirft LLMError bei Fehler/Zeitueberschreitung.
         """
         start = time.perf_counter()
+        client = self._get_client()
+        if client is None:
+            raise LLMError("LLM ist nicht konfiguriert (.env fehlt LLM_MODEL)")
         try:
             kwargs: dict[str, Any] = {
                 "model": self.config.llm_model,
@@ -68,7 +81,7 @@ class LLMClient:
                 kwargs["tools"] = tools
                 kwargs["tool_choice"] = "auto"
 
-            response = self.client.chat.completions.create(**kwargs)
+            response = client.chat.completions.create(**kwargs)
         except Exception as e:  # noqa: BLE001
             raise LLMError(f"LLM nicht erreichbar: {e}") from e
 

@@ -43,8 +43,9 @@ class Config:
     terminal_max_output: int = 10_000
 
     # ---- Server ----
+    # 8000 nutzt der SearXNG/Docker-Container; Agent lauscht auf 8081.
     host: str = "0.0.0.0"
-    port: int = 8000
+    port: int = 8081
 
     # ---- Communication ----
     whatsapp_enabled: bool = False
@@ -95,6 +96,6 @@ class Config:
             terminal_timeout=_int("TERMINAL_TIMEOUT", 10),
             terminal_max_output=_int("TERMINAL_MAX_OUTPUT", 10_000),
             host=_env("HOST", "0.0.0.0"),
-            port=_int("PORT", 8000),
+            port=_int("PORT", 8081),
             whatsapp_enabled=_bool("WHATSAPP_ENABLED", False),
         )
