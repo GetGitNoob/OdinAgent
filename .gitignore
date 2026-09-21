@@ -1,0 +1,23 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Laufzeit-Daten
+data/
+logs/
+*.log
+
+# Node (WhatsApp spaeter)
+node_modules/
+
+# OS
+.DS_Store
+
+# Backup-Dateien
+*.backup
+*.orig
