@@ -26,7 +26,7 @@ from tools.base import BaseTool, ToolResult
 _DENY_PATTERNS: tuple[str, ...] = (
     # Destruktive Dateisystem-Operationen (rm mit -r und/oder -f auf Root)
     #  -> '/', '/*' oder '.*  am Ende', blocken.
-    r"\brm\s+(?:-[a-zA-Z]*[rf][a-zA-Z]*\s+)*(?:/\*|/\s|/$|\\.|/\.)",
+    r"\brm\s+(?:-[a-zA-Z]*[rf][a-zA-Z]*\s+)*(?:/\*|/\s|/$|\\.|/.)",
     r"\bmkfs",  # Formatierung
     r"\bdd\s+if=.*of=/\s*dev/",  # auf rohe Geraete schreiben
     r"\bshred\s+.*/\s*dev/",
@@ -133,14 +133,51 @@ class TerminalTool(BaseTool):
                 cwd=cwd,
             )
         except subprocess.TimeoutExpired as e:
-            return ToolResult.fail(
-                error=f"Timeout nach {cmd_timeout}s. Befehl nicht innerhalb "
-                f"der Zeit beendet (evtl. interaktiv/blockierend)."
+            # Partial-Output kann vorhanden sein (stdout/stderr des abgebrochenen Prozes)
+            partial_stdout = ""
+            partial_stderr = ""
+            if hasattr(e, "stdout") and e.stdout:
+                partial_stdout = e.stdout if isinstance(e.stdout, str) else e.stdout.decode(errors="replace")
+            if hasattr(e, "stderr") and e.stderr:
+                partial_stderr = e.stderr if isinstance(e.stderr, str) else e.stderr.decode(errors="replace")
+            detail = (
+                f"Timeout nach {cmd_timeout}s (subprocess.TimeoutExpired). "
+                f"Befehl: {command!r}. "
+                f"Nicht innerhalb der Zeit beendet (evtl. interaktiv/blockierend)."
             )
+            if partial_stdout:
+                detail += f" Partial-stdout: {partial_stdout[:500]}"
+            if partial_stderr:
+                detail += f" Partial-stderr: {partial_stderr[:500]}"
+            return ToolResult.fail(error=detail)
         except FileNotFoundError as e:
-            return ToolResult.fail(error=f"Befehl nicht gefunden:")
+            # e.msg enthaelt typischerweise den fehlenden Pfad/Befehl
+            msg = getattr(e, "msg", None) or str(e)
+            return ToolResult.fail(
+                error=(
+                    f"FileNotFoundError: Befehl nicht gefunden: {msg} "
+                    f"(Befehl war: {command!r})"
+                )
+            )
+        except PermissionError as e:
+            msg = getattr(e, "msg", None) or str(e)
+            return ToolResult.fail(
+                error=(
+                    f"PermissionError: Keine Berechtigung: {msg} "
+                    f"(Befehl war: {command!r})"
+                )
+            )
+        except OSError as e:
+            return ToolResult.fail(
+                error=(
+                    f"OSError ({e.errno}): {e.strerror or e} "
+                    f"(Befehl war: {command!r})"
+                )
+            )
         except Exception as e:  # noqa: BLE001
-            return ToolResult.fail(error=f"Terminal-Fehler: {e}")
+            return ToolResult.fail(
+                error=f"{type(e).__name__}: {e} (Befehl war: {command!r})"
+            )
 
         # --- Output kuerzen -------------------------------
         stdout = proc.stdout or ""
@@ -152,11 +189,30 @@ class TerminalTool(BaseTool):
         if stderr_truncated:
             stderr = stderr[: self.max_output] + "\n[output truncated]"
 
-        return ToolResult.ok(
-            data={
-                "stdout": stdout,
-                "stderr": stderr,
-                "exit_code": proc.returncode,
-                "truncated": stdout_truncated or stderr_truncated,
-            }
-        )
+        exit_code = proc.returncode
+
+        # Nicht-null Exit-Code: Der Befehl lief aus, aber fehlerhaft.
+        # Wir liefern das Ergebnis trotzdem (mit exit_code), damit der
+        # Aufrufer (LLM) selbst entscheiden kann, ob es ein Problem ist.
+        # Zusätzlich kennzeichnen wir es, falls stderr vorhanden ist.
+        data = {
+            "stdout": stdout,
+            "stderr": stderr,
+            "exit_code": exit_code,
+            "truncated": stdout_truncated or stderr_truncated,
+        }
+
+        if exit_code != 0:
+            # Klare Kennzeichnung, dass der Befehl fehlerhaft endete
+            hint = f"[exit_code={exit_code}]"
+            if stderr:
+                data["note"] = (
+                    f"Befehl endete mit Exit-Code {exit_code}. "
+                    f"stderr: {stderr[:500]}"
+                )
+            else:
+                data["note"] = (
+                    f"Befehl endete mit Exit-Code {exit_code} (kein stderr)."
+                )
+
+        return ToolResult.ok(data=data)

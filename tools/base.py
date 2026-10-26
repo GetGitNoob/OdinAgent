@@ -39,12 +39,16 @@ class ToolResult:
         }
 
     def __str__(self) -> str:
-        """Kompakte, LLM-freundliche Darstellung (Kontext-schoend)."""
+        """Kompakte, LLM-freundliche Darstellung (Kontext-schoend).
+
+        Bei Fehlern wird die konkrete Fehlermeldung ausgegeben,
+        niemals ein Boolean als Ersatz.
+        """
         if not self.success:
-            return (
-                f"FEHLER: {self.error}"
-                + (" (Zustimmung erforderlich)" if self.approval_required else "")
-            )
+            parts = [f"FEHLER: {self.error or 'unbekannter Fehler'}"]
+            if self.approval_required:
+                parts.append("(Zustimmung erforderlich)")
+            return " ".join(parts)
         import json
 
         try:

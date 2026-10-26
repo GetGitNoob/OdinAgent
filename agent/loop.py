@@ -15,6 +15,7 @@ OHNE Kanal-spezifische Logik. Browser und WhatsApp sind Adapter.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Callable, Generator
 
 from agent.context import AgentContext
@@ -36,6 +37,7 @@ class AgentLoop:
         self.tools = tools
         self.conversations = conversations
         self.context = context
+        self.last_prompt_tokens = None
 
     # ---------------------------------------------------------
     # Haupt-Einstiegspunkt fuer einen Kanal. Liefert finale Antwort + Tool-Log.
@@ -62,22 +64,30 @@ class AgentLoop:
 
         messages = self.context.build_messages(history)
         meta = {"tools": [], "error": False}
+        last_tool_signature = None
+        repeated_tool_count = 0
+        repeat_limit = 10
+        last_tool_error = None  # Letzter konkreter Tool-Fehler fuer Diagnose
 
         # Beginne relais Tool-Loop (max. MAX_TOOL_ITERATIONS Runden)
-        max_rounds = 6
+        max_rounds = 100
         for _ in range(max_rounds):
             try:
                 result = self.llm.chat(
                     messages,
                     tools=self.tools.definitions(),  # lazy -> nur nötige
                 )
+                usage = result.get('usage') or {}
+                prompt_tokens = usage.get('prompt_tokens')
+                if isinstance(prompt_tokens, (int, float)) and prompt_tokens >= 0:
+                    self.last_prompt_tokens = int(prompt_tokens)
             except LLMError as e:
                 meta["error"] = True
                 final = self._llm_fallback(str(e))
                 self.conversations.append_message(
                     session_id, {"role": "assistant", "content": final}
                 )
-                return {"content": final, "tools": meta["tools"], "error": True}
+                return {"content": final, "tools": meta["tools"], "error": False}
 
             asst_content = result.get("content")
             tool_calls = result.get("tool_calls")
@@ -119,7 +129,77 @@ class AgentLoop:
                     args = json.loads(fn.get("arguments") or "{}")
                 except json.JSONDecodeError:
                     args = {}
+                signature = json.dumps(
+
+                    {"name": name, "arguments": args},
+
+                    sort_keys=True,
+
+                    ensure_ascii=False,
+
+                    separators=(",", ":"),
+
+                )
+
+                if signature == last_tool_signature:
+
+                    repeated_tool_count += 1
+
+                else:
+
+                    last_tool_signature = signature
+
+                    repeated_tool_count = 1
+
+
+
+                if repeated_tool_count >= repeat_limit:
+
+                    # Konkrete Diagnose: letzter Fehler + Befehl + Anzahl
+                    cmd_hint = ""
+                    if isinstance(args, dict):
+                        cmd_val = args.get("command") or args.get("query") or args.get("path") or ""
+                        if cmd_val:
+                            cmd_hint = f" (Befehl/Argument: {str(cmd_val)[:200]!r})"
+
+                    err_hint = ""
+                    if last_tool_error:
+                        err_hint = f"\nLetzte Fehlermeldung: {last_tool_error[:500]}"
+
+                    final = (
+                        f"Sicherheitsabbruch: Tool {name!r} wurde "
+                        f"{repeated_tool_count} Mal hintereinander mit "
+                        f"identischen Argumenten angefordert.{cmd_hint}{err_hint}\n"
+                        f"Der gleiche Aufruf liefert ohne neue Erkenntnisse "
+                        f"dasselbe Ergebnis. Bitte die Argumente aendern oder "
+                        f"eine andere Diagnose verwenden."
+                    )
+
+                    logging.getLogger("odin-agent").warning(
+                        "Sicherheitsabbruch: wiederholter Tool-Aufruf name=%s count=%d last_error=%s",
+                        name,
+                        repeated_tool_count,
+                        (last_tool_error or "")[:200],
+                    )
+
+                    self.conversations.append_message(
+                        session_id, {"role": "assistant", "content": final}
+                    )
+
+                    return {
+                        "content": final,
+                        "tools": meta["tools"],
+                        "error": True,
+                    }
+
+
+
                 tool_result = self._run_tool(name, args)
+                # Letzten konkreten Fehler merken fuer moeglichen Sicherheitsabbruch
+                if not tool_result.success and tool_result.error:
+                    last_tool_error = tool_result.error
+                else:
+                    last_tool_error = None
                 meta["tools"].append(
                     {
                         "name": name,
@@ -137,11 +217,90 @@ class AgentLoop:
                     }
                 )
 
-        # Max. Runden erreicht -> Abbruch
-        final = "Maximale Anzahl an Tool-Aufrufen erreicht. Bitte präzisiere."
-        self.conversations.append_message(
-            session_id, {"role": "assistant", "content": final}
+        # Limit erreicht: bisherigen Fortschritt ohne weitere Tools zusammenfassen
+
+        logger = logging.getLogger("odin-agent")
+
+        logger.warning(
+
+            "Tool-Rundenlimit erreicht: rounds=%d, ausgeführte_tools=%d",
+
+            max_rounds, len(meta["tools"]),
+
         )
+
+
+
+        progress = json.dumps(meta["tools"], ensure_ascii=False, indent=2)
+
+        summary_messages = messages + [{
+
+            "role": "user",
+
+            "content": (
+
+                f"Du hast das Limit von {max_rounds} Agent-Runden erreicht. "
+
+                "Führe keine weiteren Tools aus. Erstelle anhand der bisherigen "
+
+                "Unterhaltung und der protokollierten Tool-Ergebnisse einen "
+
+                "ehrlichen Zwischenbericht auf Deutsch. Gliedere ihn in "
+
+                "'Bisher herausgefunden', 'Bereits erledigt', 'Noch offen' und "
+
+                "'Nächster sinnvoller Schritt'. Trenne Fakten von Vermutungen "
+
+                "und behaupte keine nicht ausgeführten Aktionen.\n\n"
+
+                "Bisherige Tool-Ergebnisse:\n" + progress
+
+            ),
+
+        }]
+
+
+
+        try:
+
+            summary_result = self.llm.chat(summary_messages, tools=None)
+
+            final = (summary_result.get("content") or "").strip()
+
+            if not final:
+
+                raise ValueError("Leere Fortschrittszusammenfassung")
+
+        except Exception as e:
+
+            logger.warning("Fortschrittszusammenfassung fehlgeschlagen: %s", e)
+
+            names = [item.get("name", "unbekannt") for item in meta["tools"]]
+
+            recent = ", ".join(names[-10:]) if names else "Keine Tools ausgeführt"
+
+            final = (
+
+                f"Ich habe mein Limit von {max_rounds} Runden erreicht. "
+
+                f"Ausgeführt wurden {len(meta['tools'])} Tool-Aufrufe. "
+
+                f"Zuletzt verwendete Tools: {recent}. "
+
+                "Eine automatische Zusammenfassung war nicht möglich; "
+
+                "der bisherige Fortschritt ist in den Tool-Logs enthalten."
+
+            )
+
+
+
+        self.conversations.append_message(
+
+            session_id, {"role": "assistant", "content": final}
+
+        )
+
         return {"content": final, "tools": meta["tools"], "error": False}
 
     # ---------------------------------------------------------

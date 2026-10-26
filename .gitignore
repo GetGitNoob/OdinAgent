@@ -1,11 +1,15 @@
 # Secrets
 .env
+.env.bak
+*.env
 
 # Python
 __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
+venv/
+.venv/
 
 # Laufzeit-Daten
 data/
@@ -21,3 +25,8 @@ node_modules/
 # Backup-Dateien
 *.backup
 *.orig
+*.bak
+*.bak-*
+*.broken-backup
+backups/
+.backup_hindsight/

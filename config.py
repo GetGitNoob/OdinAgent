@@ -21,15 +21,21 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_SYSTEM_PROMPT = (
     "Du bist Odin, ein lokaler Assistent auf dem Server Odin. "
     "Antworte kurz und praezise auf Deutsch."
+  	"Erfinde nichts und sag nur was tatsächlich stimmt."
+  	"Du bist mein ServerAdmin mit Tools zur Bearbeitung, Erstellung oder Entfernen von Daten"
+  	"Wenn du fragen hast für eine Aufgabe, dann frage nach, bevor du etwas selbst entscheidest"
+  	"Bevor du etwas vermutest, such online nach einer Lösung"
+  
 )
 
 
 @dataclass(frozen=True)
 class Config:
     # ---- LLM ----
-    llm_base_url: str = "http://127.0.0.1:11436/v1"
+    llm_base_url: str = "http://127.0.0.1:8082/v1"
     llm_model: str = ""
     llm_api_key: str = "local-"
+    llm_max_tokens: int = 512
 
     # ---- Agent ----
     max_history_messages: int = 20
@@ -85,9 +91,10 @@ class Config:
         ) or ("/opt/odin-agent",)
 
         return cls(
-            llm_base_url=_env("LLM_BASE_URL", "http://127.0.0.1:11436/v1"),
+            llm_base_url=_env("LLM_BASE_URL", "http://127.0.0.1:8082/v1"),
             llm_model=_env("LLM_MODEL", ""),
             llm_api_key=_env("LLM_API_KEY", "local-"),
+            llm_max_tokens=_int("LLM_MAX_TOKENS", 512),
             max_history_messages=_int(
                 "MAX_HISTORY_MESSAGES", 20
             ),

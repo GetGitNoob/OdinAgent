@@ -38,7 +38,7 @@ class LLMClient:
             self._client = OpenAI(
                 base_url=self.config.llm_base_url,
                 api_key=self.config.llm_api_key or "local-",
-                timeout=60.0,
+                timeout=120.0,
                 max_retries=1,
             )
         return self._client
@@ -49,7 +49,7 @@ class LLMClient:
         if client is None:
             return False
         try:
-            client.models.list(timeout=5)
+            client.models.list(timeout=120.0)
             return True
         except Exception:
             return False
@@ -58,7 +58,7 @@ class LLMClient:
         self,
         messages: list[dict],
         tools: list[dict] | None = None,
-        max_tokens: int = 512,
+        max_tokens: int | None = None,
     ) -> dict:
         """Einfacher Nicht-Streaming-Call.
 
@@ -73,7 +73,11 @@ class LLMClient:
             kwargs: dict[str, Any] = {
                 "model": self.config.llm_model,
                 "messages": messages,
-                "max_tokens": max_tokens,
+                "max_tokens": (
+                    max_tokens
+                    if max_tokens is not None
+                    else self.config.llm_max_tokens
+                ),
                 "temperature": 0.2,
                 "stream": False,
             }

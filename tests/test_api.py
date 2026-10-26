@@ -85,3 +85,41 @@ def test_chat_stream_llm_error(client, monkeypatch):
         json={"message": "hi", "session_id": "browser-api-err"},
     )
     assert '"error"' in r.text
+
+
+# ---------------------------------------------------------
+# Session-History-Endpoint (iOS-Safari-Recovery)
+# ---------------------------------------------------------
+
+def test_session_messages_endpoint(client, monkeypatch):
+    # Persistierte Historie direkt im ConversationStore anlegen
+    # (gleicher Store, den app.py verwendet).
+    appmod.conversations.save(
+        "browser-history-test",
+        [
+            {"role": "user", "content": "Frage 1"},
+            {"role": "assistant", "content": "Antwort A"},
+        ],
+    )
+
+    r = client.get("/api/sessions/browser-history-test/messages")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["session_id"] == "browser-history-test"
+    roles = [m["role"] for m in body["messages"]]
+    assert roles == ["user", "assistant"]
+    assert body["messages"][0]["content"] == "Frage 1"
+    assert body["messages"][1]["content"] == "Antwort A"
+
+
+def test_session_messages_unknown_session_returns_empty(client):
+    r = client.get("/api/sessions/nicht-existierend-xyz/messages")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["messages"] == []
+
+
+def test_session_messages_rejects_invalid_id(client):
+    # Pfadtraversal / Sonderzeichen werden abgewiesen.
+    r = client.get("/api/sessions/..%2Fetc%2Fshadow/messages")
+    assert r.status_code in (400, 404)

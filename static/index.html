@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
     <title>ODIN // Local AI System</title>
+    <link rel="icon" type="image/png" href="/static/favicon.png">
 
     <link rel="stylesheet" href="/static/style.css">
 </head>
@@ -12,6 +13,17 @@
 <body>
 
     <div class="odin-app">
+
+<!-- SIDEBAR -->
+<button class="sidebar-toggle" id="sidebar-toggle" aria-label="Menü öffnen">☰</button>
+<div class="sidebar-backdrop" id="sidebar-backdrop"></div>
+<aside class="sidebar" id="sidebar">
+    <button class="new-chat-btn" id="new-chat-btn">+ Neuer Chat</button>
+    <nav class="chat-list" id="chat-list"></nav>
+</aside>
+
+<!-- MAIN AREA -->
+<div class="main-area">
 
 <!-- HEADER -->
 <header class="header">
@@ -48,6 +60,11 @@
             <span class="gpu-item">
                 LOAD
                 <span id="gpu-utilization">--%</span>
+            </span>
+
+            <span class="gpu-item">
+                KONTEXT
+                <span id="context-utilization" title="Letzter Modellaufruf: Prompt-Tokens / 131.072">--%</span>
             </span>
 
         </div>
@@ -146,6 +163,8 @@
             </div>
 
         </footer>
+
+</div><!-- /.main-area -->
 
     </div>
 
