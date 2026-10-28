@@ -309,6 +309,7 @@ function addThinkingMessage() {
                         <span></span>
                     </span>
                 </div>
+                <div class="task-status" id="task-status-line" hidden></div>
             </div>
         </div>
     `;
@@ -324,6 +325,164 @@ function removeThinkingMessage() {
     if (thinking) {
         thinking.remove();
     }
+}
+
+/* =========================================================
+   LIVE-ZWISCHENSTAENDE (v0.4.0)
+   Rendert Task-Updates aus der Task-JSON als Statuszeile in
+   der Thinking-Bubble. Keine eigenen LLM-Aufrufe; reine
+   Anzeige realer Ereignisse + clientseitige Laufzeit.
+   ========================================================= */
+
+// Formatiert ein Update-Event zu kurzem Anzeigetext.
+function formatTaskUpdate(update) {
+    const type = update.type || "";
+    switch (type) {
+        case "llm_start":
+            return "Denke nach… (Runde " + (update.round || 1) + ")";
+        case "tool_start": {
+            let detail = "";
+            try {
+                const args = update.arguments || {};
+                if (args.command) detail = ": " + String(args.command).slice(0, 60);
+                else if (args.query) detail = ": " + String(args.query).slice(0, 60);
+                else if (args.expression) detail = ": " + String(args.expression).slice(0, 60);
+                else if (args.path) detail = ": " + String(args.path).slice(0, 60);
+            } catch (_) {}
+            return "Tool läuft: " + (update.name || "unbekannt") + detail;
+        }
+        case "tool_done": {
+            const dur = typeof update.duration === "number" ? formatSeconds(update.duration) : "";
+            return "Fertig: " + (update.name || "Tool") + (dur ? " (" + dur + ")" : "") +
+                   (update.success ? "" : " – Fehler");
+        }
+        case "llm_done":
+            return "Antwort fertiggestellt";
+        default:
+            return type;
+    }
+}
+
+// Stabiler Referenzzeitpunkt fuer die Task-Laufzeit (monotone Uhr).
+// Wird beim ersten Poll gesetzt und darueber NICHT zurueckgesetzt –
+// so laeuft der Timer auch ueber Reloads/Poll-Zyklen durch.
+let taskTimerBase = null;   // performance.now()-Wert zum Setzen des Bases
+let taskTimerOffsetMs = 0;  // bereits gelaufene Zeit bei Setzen des Bases
+
+// Eigenes Intervall fuer die fluessige Laufzeitanzeige (unabhaengig vom
+// 1,5-s-Task-Polling). Handle-Guard verhindert doppelte Intervalle.
+let taskTimerHandle = null;
+
+// Bereits verarbeitete Update-Events (Index in data.updates), damit jedes
+// Ereignis genau einmal in die Zwischenstandsliste wandert.
+let taskUpdatesSeen = 0;
+
+// Formatiert Sekunden mit einer Nachkommastelle im deutschen Format ("12,4 s").
+function formatSeconds(seconds) {
+    return seconds.toFixed(1).replace(".", ",") + " s";
+}
+
+// Rechnet die aktuelle Gesamtlaufzeit aus dem stabilen Anker (ms).
+function getTaskElapsedMs() {
+    if (taskTimerBase === null) return null;
+    return taskTimerOffsetMs + (performance.now() - taskTimerBase);
+}
+
+// Einmalig den Zeitanker aus started_at ableiten (naive lokale ISO-Zeit,
+// OHNE kuenstliches "Z"-Suffix – das hatte die Anzeige um eine Stunde
+// verschoben). Danach bleibt der Anker stabil; nur die monotone
+// performance.now()-Uhr laeuft weiter.
+function ensureTaskTimerAnchor(startedAt) {
+    if (taskTimerBase !== null || !startedAt) return;
+    const parsed = Date.parse(startedAt);
+    if (isNaN(parsed)) return;
+    taskTimerOffsetMs = Math.max(0, Date.now() - parsed);
+    taskTimerBase = performance.now();
+}
+
+// Startet das 100-ms-Intervall (nur wenn noch keines laeuft).
+function startTaskTimer() {
+    if (taskTimerHandle !== null) return;
+    taskTimerHandle = setInterval(tickTaskTimer, 100);
+}
+
+// Stoppt das Intervall (Task-Ende, Abbruch, Chatwechsel).
+function stopTaskTimer() {
+    if (taskTimerHandle !== null) {
+        clearInterval(taskTimerHandle);
+        taskTimerHandle = null;
+    }
+}
+
+// Tickt alle 100 ms: aktualisiert NUR die sichtbare Laufzeit in der
+// Statuszeile – keine Serveranfrage, kein renderTaskStatus().
+function tickTaskTimer() {
+    const line = document.getElementById("task-status-line");
+    if (!line || line.hidden) return;
+    const totalMs = getTaskElapsedMs();
+    if (totalMs === null) return;
+    const m = line.querySelector(".task-status-time");
+    if (m) m.textContent = "läuft seit " + formatSeconds(totalMs / 1000);
+}
+
+// Schreibt neue Update-Events (ab zuletzt gesehener Index) als kleine Liste
+// unter die Statuszeile – rein DOM-seitig, max. 5 Eintraege sichtbar.
+function renderTaskUpdates(updates) {
+    const list = document.getElementById("task-updates-list");
+    if (!list) return;
+
+    for (let i = taskUpdatesSeen; i < updates.length; i++) {
+        const item = document.createElement("div");
+        item.className = "task-update-item";
+        item.textContent = formatTaskUpdate(updates[i]);
+        list.appendChild(item);
+    }
+    taskUpdatesSeen = updates.length;
+
+    // Auf die letzten 5 Eintraege begrenzen
+    while (list.children.length > 5) {
+        list.removeChild(list.firstChild);
+    }
+    list.hidden = list.children.length === 0;
+}
+
+// Ruft den Zeitanker auf, verarbeitet neue Events und startet den Timer.
+// Wird nur vom Polling aufgerufen – der 100-ms-Tick ist unabhaengig davon.
+function renderTaskStatus(data) {
+    const line = document.getElementById("task-status-line");
+    if (!line) return;
+
+    ensureTaskTimerAnchor(data.started_at);
+    startTaskTimer();
+
+    const updates = data.updates || [];
+    renderTaskUpdates(updates);
+
+    const last = updates.length ? updates[updates.length - 1] : null;
+    const baseText = last ? formatTaskUpdate(last) : "Aufgabe wird vorbereitet…";
+
+    const totalMs = getTaskElapsedMs();
+    const elapsedText = totalMs !== null
+        ? " · läuft seit " + formatSeconds(totalMs / 1000)
+        : "";
+
+    line.innerHTML = "";
+    const label = document.createElement("span");
+    label.className = "task-status-label";
+    label.textContent = baseText + elapsedText;
+    line.appendChild(label);
+
+    const time = document.createElement("span");
+    time.className = "task-status-time";
+    line.appendChild(time);
+
+    const list = document.createElement("div");
+    list.id = "task-updates-list";
+    list.className = "task-updates";
+    list.hidden = true;
+    line.appendChild(list);
+
+    line.hidden = false;
 }
 
 
@@ -427,7 +586,7 @@ async function sendMessage() {
    ========================================================= */
 
 const POLL_INTERVAL_MS = 1500;
-const POLL_TIMEOUT_MS = 120000; // 2 Minuten max. Wartezeit
+const POLL_TIMEOUT_MS = 1800000; // 30 Minuten max. Wartezeit (komplexe Aufgaben)
 
 async function pollTask(taskId) {
     const startTime = Date.now();
@@ -459,10 +618,13 @@ async function pollTask(taskId) {
         if (data.status === "interrupted") {
             return { status: "interrupted" };
         }
-        // queued oder running → weiter pollen
+        // queued oder running → Statuszeile mit Live-Zwischenstaenden aktualisieren
+        if (data.status === "running" || data.status === "queued") {
+            renderTaskStatus(data);
+        }
     }
 
-    return { status: "error", error: "Zeitüberschreitung: Keine Antwort innerhalb von 2 Minuten." };
+    return { status: "error", error: "Zeitüberschreitung: Keine Antwort innerhalb von 30 Minuten erhalten. Die Aufgabe läuft evtl. noch auf dem Server weiter – bitte Seite neu laden oder später erneut prüfen." };
 }
 
 function sleep(ms) {
@@ -484,6 +646,11 @@ function clearActiveTask() {
     try {
         localStorage.removeItem("odin_active_task");
     } catch (_) {}
+    // Laufzeit-Timer der abgeschlossenen Task zuruecksetzen
+    stopTaskTimer();
+    taskTimerBase = null;
+    taskTimerOffsetMs = 0;
+    taskUpdatesSeen = 0;
 }
 
 // Beim Seitenstart: Wenn ein Task laeuft, Status abfragen und Ergebnis anzeigen
@@ -526,6 +693,7 @@ async function recoverActiveTask() {
             if (sendButton) sendButton.disabled = true;
             input.disabled = true;
             addThinkingMessage();
+            renderTaskStatus(data);
             const result = await pollTask(stored.task_id);
             chatInFlight = false;
             if (sendButton) sendButton.disabled = false;

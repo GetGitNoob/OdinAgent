@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Callable, Generator
 
 from agent.context import AgentContext
@@ -40,6 +41,24 @@ class AgentLoop:
         self.last_prompt_tokens = None
 
     # ---------------------------------------------------------
+    # Event-Helfer: feuert optionale on_event-Callbacks, ohne dass
+    # ein Fehler im Callback den Agent-Loop abbrechen kann.
+    # ---------------------------------------------------------
+
+    @staticmethod
+    def _emit(on_event, event_type: str, **payload) -> None:
+        if on_event is None:
+            return
+        try:
+            on_event({"type": event_type, **payload})
+        except Exception:  # noqa: BLE001
+            logging.getLogger("odin-agent").debug(
+                "on_event-Callback fehlgeschlagen (ignoriert): type=%s",
+                event_type,
+                exc_info=True,
+            )
+
+    # ---------------------------------------------------------
     # Haupt-Einstiegspunkt fuer einen Kanal. Liefert finale Antwort + Tool-Log.
     # ---------------------------------------------------------
 
@@ -47,12 +66,17 @@ class AgentLoop:
         self,
         session_id: str,
         message: str,
+        on_event: Callable[[dict], None] | None = None,
     ) -> dict:
         """Verarbeitet eine Nachricht und liefert eine finale Antwort.
 
         Stellt das Tool-Calling-Relais sicher. Gibt einen dict mit:
           { "content": str, "tools": [...], "error": bool }
         zurueck. Web-UI streamt separat; hier kommt die offizielle Antwort.
+
+        on_event (optional): Wird bei realen Ereignissen aufgerufen
+        (LLM-Runde, Tool-Start/-Fertig). Dient z. B. der Web-UI fuer
+        Live-Zwischenstaende. Callback-Fehler werden geschluckt.
         """
         conv = self.conversations.get_or_create(session_id)
         history = conv.get("messages", [])
@@ -71,7 +95,8 @@ class AgentLoop:
 
         # Beginne relais Tool-Loop (max. MAX_TOOL_ITERATIONS Runden)
         max_rounds = 100
-        for _ in range(max_rounds):
+        for round_no in range(max_rounds):
+            self._emit(on_event, "llm_start", round=round_no + 1)
             try:
                 result = self.llm.chat(
                     messages,
@@ -130,31 +155,19 @@ class AgentLoop:
                 except json.JSONDecodeError:
                     args = {}
                 signature = json.dumps(
-
                     {"name": name, "arguments": args},
-
                     sort_keys=True,
-
                     ensure_ascii=False,
-
                     separators=(",", ":"),
-
                 )
 
                 if signature == last_tool_signature:
-
                     repeated_tool_count += 1
-
                 else:
-
                     last_tool_signature = signature
-
                     repeated_tool_count = 1
 
-
-
                 if repeated_tool_count >= repeat_limit:
-
                     # Konkrete Diagnose: letzter Fehler + Befehl + Anzahl
                     cmd_hint = ""
                     if isinstance(args, dict):
@@ -192,9 +205,10 @@ class AgentLoop:
                         "error": True,
                     }
 
-
-
+                self._emit(on_event, "tool_start", name=name, arguments=args)
+                t0 = time.monotonic()
                 tool_result = self._run_tool(name, args)
+                duration = round(time.monotonic() - t0, 2)
                 # Letzten konkreten Fehler merken fuer moeglichen Sicherheitsabbruch
                 if not tool_result.success and tool_result.error:
                     last_tool_error = tool_result.error
@@ -206,6 +220,13 @@ class AgentLoop:
                         "arguments": args,
                         "result": tool_result.to_dict(),
                     }
+                )
+                self._emit(
+                    on_event,
+                    "tool_done",
+                    name=name,
+                    success=bool(tool_result.success),
+                    duration=duration,
                 )
                 messages.append(
                     {
@@ -222,85 +243,46 @@ class AgentLoop:
         logger = logging.getLogger("odin-agent")
 
         logger.warning(
-
             "Tool-Rundenlimit erreicht: rounds=%d, ausgeführte_tools=%d",
-
             max_rounds, len(meta["tools"]),
-
         )
-
-
 
         progress = json.dumps(meta["tools"], ensure_ascii=False, indent=2)
 
         summary_messages = messages + [{
-
             "role": "user",
-
             "content": (
-
                 f"Du hast das Limit von {max_rounds} Agent-Runden erreicht. "
-
                 "Führe keine weiteren Tools aus. Erstelle anhand der bisherigen "
-
                 "Unterhaltung und der protokollierten Tool-Ergebnisse einen "
-
                 "ehrlichen Zwischenbericht auf Deutsch. Gliedere ihn in "
-
                 "'Bisher herausgefunden', 'Bereits erledigt', 'Noch offen' und "
-
                 "'Nächster sinnvoller Schritt'. Trenne Fakten von Vermutungen "
-
                 "und behaupte keine nicht ausgeführten Aktionen.\n\n"
-
                 "Bisherige Tool-Ergebnisse:\n" + progress
-
             ),
-
         }]
 
-
-
         try:
-
             summary_result = self.llm.chat(summary_messages, tools=None)
-
             final = (summary_result.get("content") or "").strip()
-
             if not final:
-
                 raise ValueError("Leere Fortschrittszusammenfassung")
-
         except Exception as e:
-
             logger.warning("Fortschrittszusammenfassung fehlgeschlagen: %s", e)
-
             names = [item.get("name", "unbekannt") for item in meta["tools"]]
-
             recent = ", ".join(names[-10:]) if names else "Keine Tools ausgeführt"
-
             final = (
-
                 f"Ich habe mein Limit von {max_rounds} Runden erreicht. "
-
                 f"Ausgeführt wurden {len(meta['tools'])} Tool-Aufrufe. "
-
                 f"Zuletzt verwendete Tools: {recent}. "
-
                 "Eine automatische Zusammenfassung war nicht möglich; "
-
                 "der bisherige Fortschritt ist in den Tool-Logs enthalten."
-
             )
 
-
-
         self.conversations.append_message(
-
             session_id, {"role": "assistant", "content": final}
-
         )
-
         return {"content": final, "tools": meta["tools"], "error": False}
 
     # ---------------------------------------------------------

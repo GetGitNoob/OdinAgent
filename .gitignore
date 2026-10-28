@@ -30,3 +30,6 @@ node_modules/
 *.broken-backup
 backups/
 .backup_hindsight/
+*.backup-*
+*.backup-*-*
+ha_*.yaml

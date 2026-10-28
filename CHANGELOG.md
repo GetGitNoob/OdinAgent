@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.4.0 – Hindsight-Reparatur, LLM-Timeouts, Systemd-Units
+
+### Neue Features
+- **Systemd-Units im Repo:** `systemd/`-Verzeichnis mit `hindsight.service`, `pg0-hindsight.service`, `odin-agent.service`, `ninfer.service` – vollständige Deployment-Konfiguration.
+- **LLM-Timeouts granular:** Getrennte httpx-Timeouts (connect=10s, read=600s, write=60s, pool=30s) statt flacher 120s – lange Generierungen crashen nicht mehr.
+- **reasoning_effort:** `medium` als Default für Qwen3.8-27B via NInfer.
+
+### Fehlerbehebungen
+- **Hindsight/pg0-Reparatur:** Shared-Memory-Crash behoben durch `LD_LIBRARY_PATH`-Setting in `pg0-hindsight.service` (libicuuc.so.70 aus pg0-Installation).
+- **Timer-Fix (100ms-Tick):** Zwischenstands-Events in der WebUI werden jetzt flüssig aktualisiert.
+- **Test-Isolation:** Tests laufen unabhängig voneinander, keine Cross-Contamination mehr.
+
+### Änderungen
+- System-Prompt erweitert (Ehrlichkeit, Humor, experimenteller Charakter).
+- `.gitignore` ergänzt (Backup-Dateien, HA-Konfiguration).
+
 ## v0.3.0 – Stabile Version
 
 ### Neue Features

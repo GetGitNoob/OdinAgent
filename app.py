@@ -274,6 +274,31 @@ def _save_task(task: dict) -> None:
     )
 
 
+MAX_TASK_UPDATES = 50
+
+
+def _append_task_update(task_id: str, event: dict) -> None:
+    """Haengt ein Live-Zwischenstand an die Task-JSON (thread-sicher).
+
+    Die Liste wird auf MAX_TASK_UPDATES Eintraege begrenzt. Fehlendes
+    "updates"-Feld (alte Tasks) wird toleriert. Callback-Fehler duerfen
+    den Agent-Loop nicht stoeren – daher breiter Exception-Schutz.
+    """
+    try:
+        with _tasks_lock:
+            task = _load_task(task_id)
+            if not task:
+                return
+            updates = task.setdefault("updates", [])
+            entry = {"ts": datetime.now().isoformat(timespec="seconds"), **event}
+            updates.append(entry)
+            if len(updates) > MAX_TASK_UPDATES:
+                del updates[: len(updates) - MAX_TASK_UPDATES]
+            _save_task(task)
+    except Exception:  # noqa: BLE001
+        logger.debug("_append_task_update fehlgeschlagen (ignoriert)", exc_info=True)
+
+
 def _find_by_request_id(request_id: str):
     for f in TASKS_DIR.glob("*.json"):
         try:
@@ -324,7 +349,11 @@ def start_task(req: TaskRequest):
         t["started_at"] = datetime.now().isoformat(timespec="seconds")
         _save_task(t)
         try:
-            result = agent.handle_message(t["session_id"], t["message"])
+            result = agent.handle_message(
+                t["session_id"],
+                t["message"],
+                on_event=lambda ev: _append_task_update(task_id, ev),
+            )
             t = _load_task(task_id)
             t["status"] = "done"
             t["result"] = result.get("content", "")

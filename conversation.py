@@ -114,6 +114,11 @@ class ConversationStore:
                 continue
             chat_id = data.get("id", path.stem)
             messages = data.get("messages", [])
+            # Leere Sessions (z. B. Task-Sessions, deren Worker vor der ersten
+            # persistierten Nachricht abgebrochen ist) duerfen keine
+            # Sidebar-Eintraege erzeugen.
+            if not messages:
+                continue
             # Titel bestimmen
             title = data.get("title", "")
             if not title:

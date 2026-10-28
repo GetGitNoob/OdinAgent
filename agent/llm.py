@@ -9,6 +9,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
+import httpx
 from openai import OpenAI
 
 from config import Config
@@ -35,10 +36,15 @@ class LLMClient:
         if not self.config.llm_model:
             return None
         if self._client is None:
+            # Getrennte Timeouts pro httpx-Phase (openai 3.16.2 / httpx 0.28.1):
+            # - connect: 10 s  (Server muss schnell antworten)
+            # - read:    600 s (lange Generierungen duerfen >120 s dauern)
+            # - write:   60 s  (Request-Body ist klein)
+            # - pool:    30 s  (Warten auf freie Verbindung)
             self._client = OpenAI(
                 base_url=self.config.llm_base_url,
                 api_key=self.config.llm_api_key or "local-",
-                timeout=120.0,
+                timeout=httpx.Timeout(connect=10.0, read=600.0, write=60.0, pool=30.0),
                 max_retries=1,
             )
         return self._client
@@ -79,6 +85,7 @@ class LLMClient:
                     else self.config.llm_max_tokens
                 ),
                 "temperature": 0.2,
+                "reasoning_effort": "medium",
                 "stream": False,
             }
             if tools:

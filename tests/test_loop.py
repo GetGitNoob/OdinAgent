@@ -158,3 +158,89 @@ def test_safety_abort_mentions_command(repeating_loop):
     content = result["content"]
     # Der Befehl "echo test" sollte erwähnt werden
     assert "echo test" in content or "Befehl" in content
+
+
+# ---------------------------------------------------------
+# Live-Zwischenstaende: on_event-Callback (v0.4.0)
+# ---------------------------------------------------------
+
+def test_on_event_sequence(loop):
+    """Pro Tool-Runde kommen llm_start, tool_start und tool_done."""
+    agent, _ = loop
+    events = []
+    result = agent.handle_message(
+        "sess-events", "Berechne 6*7", on_event=events.append
+    )
+    assert result["error"] is False
+
+    types = [e["type"] for e in events]
+    # Runde 1: LLM -> Tool; Runde 2: LLM -> finale Antwort
+    assert types == ["llm_start", "tool_start", "tool_done", "llm_start"], types
+
+    tool_start = next(e for e in events if e["type"] == "tool_start")
+    assert tool_start["name"] == "calculator"
+    assert tool_start["arguments"] == {"expression": "6*7"}
+
+    tool_done = next(e for e in events if e["type"] == "tool_done")
+    assert tool_done["name"] == "calculator"
+    assert tool_done["success"] is True
+    assert isinstance(tool_done["duration"], (int, float))
+
+
+def test_on_event_none_keeps_behavior(loop):
+    """on_event=None (Default) aendert das Ergebnis nicht."""
+    agent, _ = loop
+    result_default = agent.handle_message("sess-none-a", "Berechne 6*7")
+    result_explicit = agent.handle_message(
+        "sess-none-b", "Berechne 6*7", on_event=None
+    )
+    assert result_default["content"] == result_explicit["content"]
+    assert result_default["error"] == result_explicit["error"] is False
+
+
+def test_on_event_callback_exception_does_not_break_loop(loop):
+    """Ein Fehler im Callback darf den Agent-Loop nicht abbrechen."""
+    agent, _ = loop
+
+    def broken_callback(event):
+        raise RuntimeError("UI-Fehler simuliert")
+
+    result = agent.handle_message(
+        "sess-cb-err", "Berechne 6*7", on_event=broken_callback
+    )
+    assert result["error"] is False
+    assert result["content"] == "Die Antwort ist 42."
+    assert any(t["name"] == "calculator" for t in result["tools"])
+
+
+def test_tool_done_duration_uses_monotonic_clock(loop):
+    """Die gemeldete Tool-Dauer basiert auf einer monotonen Uhr.
+
+    Ein Tool, das 0,2 s laeuft, muss eine Dauer von ~0,2 s melden –
+    unabhaengig von Spruengen der Systemuhr (wall clock). Der Wert wird
+    mit zwei Nachkommastellen gerundet und ist immer >= 0.
+    """
+    import time as _time
+
+    from tools.base import BaseTool, ToolResult
+
+    class SlowCalculator(CalculatorTool):
+        def run(self, **kwargs):
+            _time.sleep(0.2)
+            return super().run(**kwargs)
+
+    agent, _ = loop
+    agent.tools.register(SlowCalculator())
+
+    events = []
+    result = agent.handle_message(
+        "sess-duration", "Berechne 6*7", on_event=events.append
+    )
+    assert result["error"] is False
+
+    done = next(e for e in events if e["type"] == "tool_done")
+    # Monotone Messung: 0,2 s Schlaf -> Dauer im Bereich [0,19; 1,0] s
+    assert isinstance(done["duration"], float)
+    assert 0.19 <= done["duration"] < 1.0, done["duration"]
+    # Rounding auf zwei Nachkommestellen
+    assert round(done["duration"], 2) == done["duration"]

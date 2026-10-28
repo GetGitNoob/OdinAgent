@@ -60,7 +60,7 @@ cp .env.example .env   # Werte anpassen (LLM, Port, Roots ...)
 |-------------------|--------------|
 | `GET /`           | Browser-UI (statisch) |
 | `GET /api/health` | Status (`ok`/`degraded`), LLM-Verfügbarkeit |
-| `GET /api/version`| Version (0.2.0) |
+| `GET /api/version`| Version (0.4.0) |
 | `GET /api/system` | Host/CPU/RAM/Disk/GPU/Uptime/Prozesse |
 | `POST /api/chat`  | SSE-Stream: Antwort + Tool-Events |
 

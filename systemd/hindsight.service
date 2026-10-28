@@ -1,0 +1,22 @@
+[Unit]
+Description=Hindsight Memory Daemon (OpenAI-compatible LLM via Ninfer on :8082)
+After=network.target pg0-hindsight.service ninfer.service
+Requires=pg0-hindsight.service
+Wants=ninfer.service
+PartOf=odin-agent.service
+
+[Service]
+Type=simple
+User=berni
+WorkingDirectory=/home/berni
+Environment=HOME=/home/berni
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/snap/bin
+ExecStart=/opt/hermes/venv/bin/python /home/berni/hindsight_daemon.py
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

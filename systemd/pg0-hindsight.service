@@ -1,0 +1,32 @@
+[Unit]
+Description=pg0 PostgreSQL 18.1 for Hindsight (embedded hermes profile)
+After=network.target
+Before=hindsight.service
+
+[Service]
+Type=forking
+User=berni
+Group=berni
+Environment=HOME=/home/berni
+Environment=LD_LIBRARY_PATH=/home/berni/.pg0/installation/18.1.0/lib
+WorkingDirectory=/home/berni
+PIDFile=/home/berni/.pg0/instances/hindsight-embed-hermes/data/postmaster.pid
+ExecStart=/home/berni/.pg0/installation/18.1.0/bin/pg_ctl start \
+    -D /home/berni/.pg0/instances/hindsight-embed-hermes/data \
+    -w -t 30 \
+    -l /home/berni/.pg0/instances/hindsight-embed-hermes/data/log/pg0-systemd.log \
+    -o "-F -p 5432 -c logging_collector=on -c maintenance_work_mem=512MB -c work_mem=64MB -c log_rotation_age=1d -c log_rotation_size=100MB -c shared_buffers=256MB -c effective_cache_size=1GB -c max_parallel_maintenance_workers=4 -c log_directory=log -c log_filename=postgresql-%%Y-%%m-%%d.log -c timezone=UTC -c log_timezone=UTC -c shared_memory_type=sysv -c dynamic_shared_memory_type=sysv"
+ExecStop=/home/berni/.pg0/installation/18.1.0/bin/pg_ctl stop \
+    -D /home/berni/.pg0/instances/hindsight-embed-hermes/data \
+    -m fast -w -t 30
+ExecReload=/home/berni/.pg0/installation/18.1.0/bin/pg_ctl reload \
+    -D /home/berni/.pg0/instances/hindsight-embed-hermes/data
+TimeoutStartSec=45
+TimeoutStopSec=35
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

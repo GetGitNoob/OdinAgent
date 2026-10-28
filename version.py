@@ -1,4 +1,4 @@
 """Zentrale Versionsdefinition des Odin-Agenten."""
 
-VERSION = "0.2.0"
-BUILD = "0.2.0"
+VERSION = "0.4.0"
+BUILD = "0.4.0"

@@ -928,6 +928,40 @@ body {
 }
 
 /* =========================================================
+   TASK-STATUSZEILE (Live-Zwischenstaende, v0.4.0)
+   Dezente Anzeige realer Ereignisse in der Thinking-Bubble.
+   ========================================================= */
+
+.task-status {
+    margin-top: 6px;
+
+    font-size: 0.78em;
+    font-style: italic;
+
+    color: var(--text-dim, #8a8f98);
+
+    overflow-wrap: anywhere;
+}
+
+/* Zwischenstandsliste unter der Statuszeile (max. 5 Eintraege) */
+.task-updates {
+    margin-top: 4px;
+
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+
+    font-size: 0.95em;
+    font-style: normal;
+
+    opacity: 0.85;
+}
+
+.task-update-item {
+    overflow-wrap: anywhere;
+}
+
+/* =========================================================
    iPHONE / MOBILE OPTIMIZATION
    ========================================================= */
 

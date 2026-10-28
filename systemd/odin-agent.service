@@ -1,0 +1,18 @@
+[Unit]
+Description=ODIN Agent (Web-UI-Adapter, FastAPI/SSE)
+After=network.target
+
+[Service]
+Type=simple
+User=berni
+Group=berni
+WorkingDirectory=/opt/odin-agent
+ExecStart=/opt/odin-agent/venv/bin/uvicorn app:app --host 0.0.0.0 --port 8081 --app-dir /opt/odin-agent
+Restart=on-failure
+RestartSec=3
+# Nicht das ganze System killen, nur den Agent-Prozess
+KillMode=mixed
+TimeoutStopSec=10
+
+[Install]
+WantedBy=multi-user.target
